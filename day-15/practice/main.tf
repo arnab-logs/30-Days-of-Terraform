@@ -1,0 +1,283 @@
+# day-15-demo VPC Peering
+
+resource "aws_vpc" "primary_vpc" {
+  provider             = aws.primary
+  cidr_block           = var.primary_vpc_cidr
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name        = "day-15-demo-Primary-VPC-${var.primary_region}"
+    Environment = "day-15-demo"
+    Purpose     = "day-15-demo-VPC-Peering"
+  }
+}
+
+resource "aws_vpc" "secondary_vpc" {
+  provider             = aws.secondary
+  cidr_block           = var.secondary_vpc_cidr
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name        = "day-15-demo-Secondary-VPC-${var.secondary_region}"
+    Environment = "day-15-demo"
+    Purpose     = "day-15-demo-VPC-Peering"
+  }
+}
+
+resource "aws_subnet" "primary_subnet" {
+  provider                = aws.primary
+  vpc_id                  = aws_vpc.primary_vpc.id
+  cidr_block              = var.primary_subnet_cidr
+  availability_zone       = data.aws_availability_zones.primary.names[0]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name        = "day-15-demo-Primary-Subnet-${var.primary_region}"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_subnet" "secondary_subnet" {
+  provider                = aws.secondary
+  vpc_id                  = aws_vpc.secondary_vpc.id
+  cidr_block              = var.secondary_subnet_cidr
+  availability_zone       = data.aws_availability_zones.secondary.names[0]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name        = "day-15-demo-Secondary-Subnet-${var.secondary_region}"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_internet_gateway" "primary_igw" {
+  provider = aws.primary
+  vpc_id   = aws_vpc.primary_vpc.id
+
+  tags = {
+    Name        = "day-15-demo-Primary-IGW"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_internet_gateway" "secondary_igw" {
+  provider = aws.secondary
+  vpc_id   = aws_vpc.secondary_vpc.id
+
+  tags = {
+    Name        = "day-15-demo-Secondary-IGW"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_route_table" "primary_rt" {
+  provider = aws.primary
+  vpc_id   = aws_vpc.primary_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.primary_igw.id
+  }
+
+  tags = {
+    Name        = "day-15-demo-Primary-Route-Table"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_route_table" "secondary_rt" {
+  provider = aws.secondary
+  vpc_id   = aws_vpc.secondary_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.secondary_igw.id
+  }
+
+  tags = {
+    Name        = "day-15-demo-Secondary-Route-Table"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_route_table_association" "primary_rta" {
+  provider       = aws.primary
+  subnet_id      = aws_subnet.primary_subnet.id
+  route_table_id = aws_route_table.primary_rt.id
+}
+
+resource "aws_route_table_association" "secondary_rta" {
+  provider       = aws.secondary
+  subnet_id      = aws_subnet.secondary_subnet.id
+  route_table_id = aws_route_table.secondary_rt.id
+}
+
+resource "aws_vpc_peering_connection" "primary_to_secondary" {
+  provider    = aws.primary
+  vpc_id      = aws_vpc.primary_vpc.id
+  peer_vpc_id = aws_vpc.secondary_vpc.id
+  peer_region = var.secondary_region
+  auto_accept = false
+
+  tags = {
+    Name        = "day-15-demo-Primary-to-Secondary-Peering"
+    Environment = "day-15-demo"
+    Side        = "Requester"
+  }
+}
+
+resource "aws_vpc_peering_connection_accepter" "secondary_accepter" {
+  provider                  = aws.secondary
+  vpc_peering_connection_id = aws_vpc_peering_connection.primary_to_secondary.id
+  auto_accept               = true
+
+  tags = {
+    Name        = "day-15-demo-Secondary-Peering-Accepter"
+    Environment = "day-15-demo"
+    Side        = "Accepter"
+  }
+}
+
+resource "aws_route" "primary_to_secondary" {
+  provider                  = aws.primary
+  route_table_id            = aws_route_table.primary_rt.id
+  destination_cidr_block    = var.secondary_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.primary_to_secondary.id
+
+  depends_on = [aws_vpc_peering_connection_accepter.secondary_accepter]
+}
+
+resource "aws_route" "secondary_to_primary" {
+  provider                  = aws.secondary
+  route_table_id            = aws_route_table.secondary_rt.id
+  destination_cidr_block    = var.primary_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.primary_to_secondary.id
+
+  depends_on = [aws_vpc_peering_connection_accepter.secondary_accepter]
+}
+
+resource "aws_security_group" "primary_sg" {
+  provider    = aws.primary
+  name        = "day-15-demo-primary-vpc-sg"
+  description = "SG for Primary VPC instance"
+  vpc_id      = aws_vpc.primary_vpc.id
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "ICMP"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.secondary_vpc_cidr]
+  }
+
+  ingress {
+    description = "VPC Peering TCP"
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = [var.secondary_vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "day-15-demo-Primary-VPC-SG"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_security_group" "secondary_sg" {
+  provider    = aws.secondary
+  name        = "day-15-demo-secondary-vpc-sg"
+  description = "SG for Secondary VPC instance"
+  vpc_id      = aws_vpc.secondary_vpc.id
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "ICMP"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.primary_vpc_cidr]
+  }
+
+  ingress {
+    description = "VPC Peering TCP"
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = [var.primary_vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "day-15-demo-Secondary-VPC-SG"
+    Environment = "day-15-demo"
+  }
+}
+
+resource "aws_instance" "primary_instance" {
+  provider               = aws.primary
+  ami                    = data.aws_ami.primary_ami.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.primary_subnet.id
+  vpc_security_group_ids = [aws_security_group.primary_sg.id]
+  key_name               = var.primary_key_name
+
+  user_data = local.primary_user_data
+
+  tags = {
+    Name        = "day-15-demo-Primary-Instance"
+    Environment = "day-15-demo"
+    Region      = var.primary_region
+  }
+
+  depends_on = [aws_vpc_peering_connection_accepter.secondary_accepter]
+}
+
+resource "aws_instance" "secondary_instance" {
+  provider               = aws.secondary
+  ami                    = data.aws_ami.secondary_ami.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.secondary_subnet.id
+  vpc_security_group_ids = [aws_security_group.secondary_sg.id]
+  key_name               = var.secondary_key_name
+
+  user_data = local.secondary_user_data
+
+  tags = {
+    Name        = "day-15-demo-Secondary-Instance"
+    Environment = "day-15-demo"
+    Region      = var.secondary_region
+  }
+
+  depends_on = [aws_vpc_peering_connection_accepter.secondary_accepter]
+}
