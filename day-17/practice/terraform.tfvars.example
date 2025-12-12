@@ -1,0 +1,15 @@
+# Example terraform.tfvars
+aws_region = "us-east-1"
+
+app_name = "day-17-demo-my-app-bluegreen"
+
+solution_stack_name = "64bit Amazon Linux 2023 v6.2.0 running Node.js 20"
+
+instance_type = "t3.micro"
+
+tags = {
+  Project     = "day-17-demo-BlueGreenDeployment"
+  Environment = "day-17-demo"
+  ManagedBy   = "Terraform"
+  Owner       = "arnab"
+}
