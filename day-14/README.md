@@ -239,6 +239,8 @@ What they give us:
 
 Website URL — access your live site.
 
+<img width="2914" height="1758" alt="image" src="https://github.com/user-attachments/assets/17acb343-9574-460a-b6aa-6076b92ba697" />
+
 CloudFront distribution ID — manage or update the distribution.
 
 S3 bucket name — reference the private bucket easily.
